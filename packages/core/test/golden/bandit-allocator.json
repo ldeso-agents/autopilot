@@ -1,0 +1,15 @@
+{
+  "totalReturn": "9964014487183220147671",
+  "marketBenchmarkReturn": "15379172599436467265628",
+  "returnVsMarket": "-5415158112253247117957",
+  "maxDrawdownVsMarket": "5415158112253247117957",
+  "turnover": "45000000000000000000",
+  "rotations": 48,
+  "blockedSubmissions": 0,
+  "onTargetPct": 0.5428571428571428,
+  "offTargetPct": 0.44285714285714284,
+  "poolSamples": 280,
+  "equityPoints": 70,
+  "finalEquity": "9964014487183220147671",
+  "finalMarketBenchmark": "15379172599436467265628"
+}
