@@ -9,6 +9,9 @@ import { Gauges } from "./components/Gauges.js";
 import { EquityChart } from "./components/EquityChart.js";
 import { AllocationHeatmap, type HeatmapView } from "./components/AllocationHeatmap.js";
 import { EarningsHeatmap } from "./components/EarningsHeatmap.js";
+import { ArenaPanel } from "./components/ArenaPanel.js";
+import { ArenaEquityChart } from "./components/ArenaEquityChart.js";
+import { Leaderboard } from "./components/Leaderboard.js";
 import {
   DEFAULT_RUN,
   PRESETS,
@@ -16,7 +19,14 @@ import {
   configToHash,
   type RunConfig,
 } from "./lib/runConfig.js";
-import type { DisplayResult, WorkerResponse } from "./lib/serialize.js";
+import {
+  ARENA_PRESETS,
+  DEFAULT_ARENA,
+  arenaConfigFromHash,
+  arenaConfigToHash,
+  type ArenaRunConfig,
+} from "./lib/arenaConfig.js";
+import type { DisplayArenaResult, DisplayResult, WorkerResponse } from "./lib/serialize.js";
 
 const STALE_AFTER_DAYS = 14;
 const DEBOUNCE_MS = 300;
@@ -24,8 +34,9 @@ const DEBOUNCE_MS = 300;
 /** The doc pages, in reading order. Each is a real path under the site base
  *  (e.g. /theory/), so links behave like an ordinary multi-page site. The
  *  console lives at the base path; its run config still travels in the
- *  `#run=` hash. Static hosts serve a per-page index.html + a 404.html copy
- *  of the SPA (see vite.config), so deep links resolve without a server. */
+ *  `#run=` hash. The arena is its own page at /arena/ with an `#arena=`
+ *  hash. Static hosts serve a per-page index.html + a 404.html copy of the
+ *  SPA (see vite.config), so deep links resolve without a server. */
 type DocView = "theory" | "strategies" | "guide" | "vocabulary" | "logbook";
 const DOC_PAGES: { view: DocView; segment: string; label: string }[] = [
   { view: "theory", segment: "theory", label: "theory" },
@@ -34,7 +45,7 @@ const DOC_PAGES: { view: DocView; segment: string; label: string }[] = [
   { view: "vocabulary", segment: "vocabulary", label: "vocabulary" },
   { view: "logbook", segment: "logbook", label: "logbook" },
 ];
-type View = "console" | DocView;
+type View = "console" | "arena" | DocView;
 
 /** Vite's configured base path ("/" in dev, "/<repo>/" on Pages). */
 const BASE = import.meta.env.BASE_URL;
@@ -46,7 +57,9 @@ function currentSegment(): string {
   return p.replace(/\/+$/, "");
 }
 function viewFromPath(): View {
-  const page = DOC_PAGES.find((d) => d.segment === currentSegment());
+  const segment = currentSegment();
+  if (segment === "arena") return "arena";
+  const page = DOC_PAGES.find((d) => d.segment === segment);
   return page ? page.view : "console";
 }
 function pageUrl(view: DocView): string {
@@ -55,6 +68,10 @@ function pageUrl(view: DocView): string {
 /** Console URL at the base path, carrying the run hash (e.g. "#run=…"). */
 function consoleUrl(hash = ""): string {
   return BASE + hash;
+}
+/** Arena URL at /arena/, carrying the roster hash (e.g. "#arena=…"). */
+function arenaUrl(hash = ""): string {
+  return BASE + "arena/" + hash;
 }
 
 /** Strategy / market-bench / revenue-bench switch on both heat-map panels; the
@@ -86,8 +103,8 @@ function viewSuffix(view: HeatmapView): string {
 
 /** Live replay state: the last good result stays on the instruments while a
  *  newer run computes (or a half-typed config errors), no flicker, no button. */
-interface LiveState {
-  result: DisplayResult | null;
+interface LiveState<R> {
+  result: R | null;
   elapsedMs: number;
   running: boolean;
   error: string | null;
@@ -95,11 +112,14 @@ interface LiveState {
 
 export function App() {
   const [config, setConfig] = useState<RunConfig>(() => configFromHash(location.hash) ?? DEFAULT_RUN);
+  const [arenaConfig, setArenaConfig] = useState<ArenaRunConfig>(
+    () => arenaConfigFromHash(location.hash) ?? DEFAULT_ARENA,
+  );
   const [view, setView] = useState<View>(() => viewFromPath());
   const [heatmapView, setHeatmapView] = useState<HeatmapView>("strategy");
 
-  // browser back/forward: resync the page from the URL, and (on the console)
-  // the run config from its hash. In-app navigation uses pushState below.
+  // browser back/forward: resync the page from the URL, and the visible
+  // page's config from its hash. In-app navigation uses pushState below.
   useEffect(() => {
     const onPop = () => {
       const v = viewFromPath();
@@ -107,13 +127,18 @@ export function App() {
       if (v === "console") {
         const c = configFromHash(location.hash);
         if (c) setConfig(c);
+      } else if (v === "arena") {
+        const c = arenaConfigFromHash(location.hash);
+        if (c) setArenaConfig(c);
       }
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
-  const [live, setLive] = useState<LiveState>({ result: null, elapsedMs: 0, running: false, error: null });
+  const [live, setLive] = useState<LiveState<DisplayResult>>({ result: null, elapsedMs: 0, running: false, error: null });
+  const [arenaLive, setArenaLive] = useState<LiveState<DisplayArenaResult>>({ result: null, elapsedMs: 0, running: false, error: null });
   const [activePreset, setActivePreset] = useState<string | null>(null);
+  const [activeArenaPreset, setActiveArenaPreset] = useState<string | null>("battle-royale");
   const [copied, setCopied] = useState(false);
   const workerRef = useRef<Worker | null>(null);
   const datasetRef = useRef<unknown | null>(null);
@@ -130,6 +155,10 @@ export function App() {
       busyRef.current = false;
       if (msg.type === "done") {
         setLive({ result: msg.result, elapsedMs: msg.elapsedMs, running: false, error: null });
+      } else if (msg.type === "arenaDone") {
+        setArenaLive({ result: msg.result, elapsedMs: msg.elapsedMs, running: false, error: null });
+      } else if (msg.request === "arena") {
+        setArenaLive((prev) => ({ ...prev, running: false, error: msg.message }));
       } else {
         setLive((prev) => ({ ...prev, running: false, error: msg.message }));
       }
@@ -143,16 +172,21 @@ export function App() {
     return () => worker.terminate();
   }, [spawnWorker]);
 
-  // live replay: every config change re-runs after a short debounce
+  // live replay: every config change re-runs after a short debounce. The
+  // request kind follows the visible page: the arena page computes the
+  // roster, everything else keeps the console run warm.
+  const arenaVisible = view === "arena";
   useEffect(() => {
     const timer = setTimeout(() => {
       void (async () => {
         if (!workerRef.current) return;
         const seq = ++seqRef.current;
-        setLive((prev) => ({ ...prev, running: true }));
+        if (arenaVisible) setArenaLive((prev) => ({ ...prev, running: true }));
+        else setLive((prev) => ({ ...prev, running: true }));
         try {
+          const dataKind = arenaVisible ? arenaConfig.data.kind : config.data.kind;
           let historical: unknown | null = null;
-          if (config.data.kind === "historical") {
+          if (dataKind === "historical") {
             if (datasetRef.current === null) {
               const res = await fetch(`${import.meta.env.BASE_URL}data/aerodrome-epochs.v1.json`);
               if (!res.ok) throw new Error("historical dataset not published yet, run `pnpm data` and redeploy");
@@ -161,10 +195,13 @@ export function App() {
             historical = datasetRef.current;
           }
           if (seq !== seqRef.current) return; // superseded while fetching
-          // keep the console's shareable URL current, but only while it is the
-          // visible page, never rewrite a doc-page path
-          if (viewFromPath() === "console") {
+          // keep the visible page's shareable URL current, but never rewrite
+          // another page's path
+          const pathView = viewFromPath();
+          if (pathView === "console" && !arenaVisible) {
             history.replaceState(null, "", configToHash(config)); // replace, never push, no history spam
+          } else if (pathView === "arena" && arenaVisible) {
+            history.replaceState(null, "", arenaUrl(arenaConfigToHash(arenaConfig)));
           }
           // true cancellation: a worker mid-computation can't be interrupted, so a
           // superseding run kills it and posts to a fresh one instead of queueing
@@ -173,27 +210,33 @@ export function App() {
             spawnWorker();
           }
           busyRef.current = true;
-          workerRef.current?.postMessage({ type: "run", seq, config, historical });
+          if (arenaVisible) {
+            workerRef.current?.postMessage({ type: "arena", seq, config: arenaConfig, historical });
+          } else {
+            workerRef.current?.postMessage({ type: "run", seq, config, historical });
+          }
         } catch (err) {
           if (seq !== seqRef.current) return;
-          setLive((prev) => ({
-            ...prev,
-            running: false,
-            error: err instanceof Error ? err.message : String(err),
-          }));
+          const message = err instanceof Error ? err.message : String(err);
+          if (arenaVisible) setArenaLive((prev) => ({ ...prev, running: false, error: message }));
+          else setLive((prev) => ({ ...prev, running: false, error: message }));
         }
       })();
     }, DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [config, spawnWorker]);
+  }, [config, arenaConfig, arenaVisible, spawnWorker]);
 
   const copyLink = useCallback(() => {
-    history.replaceState(null, "", consoleUrl(configToHash(config)));
+    history.replaceState(
+      null,
+      "",
+      view === "arena" ? arenaUrl(arenaConfigToHash(arenaConfig)) : consoleUrl(configToHash(config)),
+    );
     void navigator.clipboard.writeText(location.href).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
-  }, [config]);
+  }, [config, arenaConfig, view]);
 
   /** Navigate to a doc page (real path, pushed so back/forward works). */
   const openPage = useCallback((v: DocView) => {
@@ -208,6 +251,11 @@ export function App() {
     },
     [],
   );
+  /** Open the arena page, carrying the current roster hash. */
+  const openArena = useCallback(() => {
+    history.pushState(null, "", arenaUrl(arenaConfigToHash(arenaConfig)));
+    setView("arena");
+  }, [arenaConfig]);
 
   const staleness = useMemo(() => {
     // only meaningful for the published historical dataset (synthetic data is
@@ -221,6 +269,7 @@ export function App() {
   }, [live.result, config.data.kind]);
 
   const preset = PRESETS.find((p) => p.id === activePreset);
+  const arenaPreset = ARENA_PRESETS.find((p) => p.id === activeArenaPreset);
 
   return (
     <>
@@ -230,6 +279,17 @@ export function App() {
         </h1>
         <span className="links">
           live replay · deterministic core · shared links replay exactly ·{" "}
+          <a
+            href={arenaUrl()}
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+              e.preventDefault();
+              openArena();
+            }}
+          >
+            arena
+          </a>{" "}
+          ·{" "}
           {DOC_PAGES.map((page) => (
             <span key={page.view}>
               <a
@@ -251,11 +311,97 @@ export function App() {
           </a>
         </span>
       </header>
-      <div className={`flight-director ${live.running ? "running" : ""}`} aria-hidden>
+      <div className={`flight-director ${(view === "arena" ? arenaLive : live).running ? "running" : ""}`} aria-hidden>
         <div className="horizon" />
       </div>
 
-      {view !== "console" ? (
+      {view === "arena" ? (
+        <main className="deck">
+          <section aria-label="arena roster">
+            <div className="panel">
+              <p className="placard">Arena scenarios</p>
+              <div className="preset-bar">
+                {ARENA_PRESETS.map((p) => (
+                  <button
+                    key={p.id}
+                    className={activeArenaPreset === p.id ? "active" : ""}
+                    onClick={() => {
+                      setArenaConfig(p.config);
+                      setActiveArenaPreset(p.id);
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <p className="preset-blurb">
+                {arenaPreset
+                  ? arenaPreset.blurb
+                  : "Assemble a roster; every agent allocates in the same market and they split the same revenue, weight for weight."}
+              </p>
+            </div>
+
+            <ArenaPanel
+              config={arenaConfig}
+              onChange={(next) => {
+                setArenaConfig(next);
+                setActiveArenaPreset(null);
+              }}
+            />
+          </section>
+
+          <section aria-label="arena standings">
+            {arenaLive.error && (
+              <div className="banner alert" role="status">
+                Arena run failed: {arenaLive.error}
+                {arenaLive.result ? ", showing the last good run." : ""}
+              </div>
+            )}
+            {arenaLive.result ? (
+              <>
+                <div className="panel">
+                  <button className="copy-link" onClick={copyLink}>
+                    {copied ? "Copied" : "Copy link to this arena"}
+                  </button>
+                  <p className="placard">
+                    Leaderboard{" "}
+                    <span className="unit">
+                      · {arenaLive.running ? "recomputing…" : `computed in ${Math.round(arenaLive.elapsedMs)} ms`}
+                    </span>
+                  </p>
+                  <Leaderboard result={arenaLive.result} />
+                </div>
+                <div className="panel">
+                  <p className="placard">Equity per unit weight, all agents</p>
+                  <ArenaEquityChart result={arenaLive.result} />
+                  <div className="legend">
+                    <span>
+                      solid: agents, cumulative {arenaLive.result.revenueUnit === "usd" ? "USD " : ""}revenue per unit
+                      weight
+                    </span>
+                    <span>
+                      <span className="chip" style={{ background: "#E8B44F" }} />
+                      market bench: global revenue ÷ global weight
+                    </span>
+                    <span>
+                      <span className="chip" style={{ background: "#6FB8D3" }} />
+                      revenue bench: each week's revenue shares, held with foresight
+                    </span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              !arenaLive.error && (
+                <div className="panel">
+                  <div className="empty">
+                    {arenaLive.running ? "Running the arena in a worker; the panel stays live." : "Warming up…"}
+                  </div>
+                </div>
+              )
+            )}
+          </section>
+        </main>
+      ) : view !== "console" ? (
         (() => {
           const closeDoc = () => openConsole(config);
           if (view === "theory") return <Theory onClose={closeDoc} />;

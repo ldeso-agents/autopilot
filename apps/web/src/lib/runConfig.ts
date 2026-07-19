@@ -12,7 +12,13 @@ export type StrategyKind =
   | "fixedGrid1h"
   | "persistenceCarry"
   | "waterFilling"
-  | "continuousGreedy";
+  | "continuousGreedy"
+  | "uniformStatic"
+  | "randomRotator"
+  | "momentumChaser"
+  | "ewmaForecast"
+  | "crowdingAvoider"
+  | "banditAllocator";
 
 export type ModelKind = "epoch" | "continuous";
 export type SyntheticKind = "persistent" | "bursty" | "regime";
@@ -129,12 +135,12 @@ export const PRESETS: { id: string; label: string; blurb: string; config: RunCon
 // URL hash serialization, the whole config, base64url-encoded JSON
 // ---------------------------------------------------------------------------
 
-function toBase64Url(s: string): string {
+export function toBase64Url(s: string): string {
   const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(s)));
   return b64.replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
-function fromBase64Url(s: string): string {
+export function fromBase64Url(s: string): string {
   const b64 = s.replaceAll("-", "+").replaceAll("_", "/");
   const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   return new TextDecoder().decode(bytes);
