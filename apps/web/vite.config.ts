@@ -5,8 +5,8 @@ import { join, resolve } from "node:path";
 
 const repoData = resolve(__dirname, "../../data");
 
-/** Doc-page path segments (kept in sync with DOC_PAGES in App.tsx). */
-const DOC_SEGMENTS = ["theory", "strategies", "guide", "vocabulary", "logbook"];
+/** Page path segments (kept in sync with DOC_PAGES + the arena in App.tsx). */
+const DOC_SEGMENTS = ["theory", "strategies", "guide", "vocabulary", "logbook", "arena"];
 
 /** Static multi-page routing on a plain file host (GitHub Pages): the SPA is a
  *  single index.html, so emit a copy at each doc-page path (dist/theory/
