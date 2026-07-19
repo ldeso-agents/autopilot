@@ -14,7 +14,9 @@ A proof-of-concept autopilot (relay) for the [Aero](https://aero.xyz) economy on
 - **A differential-tested TypeScript twin** of the accounting-critical on-chain logic:
   TS generates fixture vectors, Foundry replays them and asserts exact equality (P2).
 - **A static simulator site** ([`apps/web`](apps/web)) replaying strategies against
-  historical Aerodrome data and simulated Aero scenarios, reproducible via URL.
+  historical Aerodrome data and simulated Aero scenarios, reproducible via URL — plus an
+  [arena](docs/ARENA.md) where rosters of strategies compete for one revenue pot in a
+  shared v3 market.
 
 It runs live against Aerodrome v2 on Base today and absorbs Aero's real interfaces as
 they publish (code drops from Aug 3, launch September, see
@@ -40,6 +42,7 @@ they publish (code drops from Aug 3, launch September, see
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Governors & maintainers guide: [roles & keys](docs/OPERATIONS.md#1-roles--keys), [deployment](docs/OPERATIONS.md#2-deployment-runbook) / [cut](docs/OPERATIONS.md#5-cut-runbook-diamond-governance) / [verification](docs/OPERATIONS.md#6-contract-verification-sourcify-first-explorer-second) runbooks, [keeper operations](docs/OPERATIONS.md#3-keeper-operations), [failure modes](docs/OPERATIONS.md#4-failure-modes--gotchas), and the [emergency runbook](docs/OPERATIONS.md#7-sunset--emergency) |
 | [docs/BRIEF.md](docs/BRIEF.md) | The initiating build brief, verbatim, design principles, contract/test/web specs, canary policy, the [M0–M5 milestone plan](docs/BRIEF.md#13-milestones) referenced throughout the repo, and the [definition of done](docs/BRIEF.md#14-definition-of-done) |
 | [docs/SLITHER-TRIAGE.md](docs/SLITHER-TRIAGE.md) | Static-analysis triage policy and the pinned, accepted findings (vendored diamond + our facets) |
+| [docs/ARENA.md](docs/ARENA.md) | The multi-agent arena: mechanics ([simultaneous moves, benchmarks, conservation](docs/ARENA.md#1-mechanics)), [reading the leaderboard](docs/ARENA.md#2-reading-the-leaderboard), the [battle-test strategy roster](docs/ARENA.md#3-the-roster-why-these-strategies-exist), and the [on-chain fork/testnet feasibility analysis](docs/ARENA.md#4-could-the-arena-run-on-a-blockchain-fork--testnet) |
 
 ## Quick start
 
