@@ -16,6 +16,12 @@ import {
 } from "../src/strategies/persistenceCarry.js";
 import { portfolioWeightOnPool, type Portfolio } from "../src/strategies/types.js";
 import { waterFill, waterFilling, WATER_FILL_SCALE } from "../src/strategies/waterFilling.js";
+import { uniformStatic } from "../src/strategies/uniformStatic.js";
+import { randomRotator } from "../src/strategies/randomRotator.js";
+import { momentumChaser } from "../src/strategies/momentumChaser.js";
+import { ewmaForecast } from "../src/strategies/ewmaForecast.js";
+import { crowdingAvoider } from "../src/strategies/crowdingAvoider.js";
+import { banditAllocator } from "../src/strategies/banditAllocator.js";
 
 /** Fake market state: cumulative revenue via constant per-second rates. */
 function fakeState(
@@ -314,4 +320,257 @@ describe("continuousGreedy", () => {
   it("defaults to one Base block cadence", () => {
     expect(continuousGreedy().cadenceSec).toBe(2);
   });
+});
+
+describe("uniformStatic", () => {
+  it("splits equally over the universe and re-proposes identically", () => {
+    const strategy = uniformStatic();
+    const state = fakeState({ a: 30n, b: 10n }, { a: WAD, b: 0n });
+    const first = strategy.propose(state, makePortfolio([freeTranche("t0")]));
+    expectSumsToWad(first);
+    expect(first.get("a")).toBe(WAD / 2n);
+    expect(first.get("b")).toBe(WAD / 2n);
+    expect(strategy.propose(state, makePortfolio([freeTranche("t0")]))).toEqual(first);
+    expect(strategy.cadenceSec).toBe(WEEK);
+  });
+
+  it("respects the pool allowlist", () => {
+    const strategy = uniformStatic({ pools: ["a", "c"] });
+    const state = fakeState({ a: 5n, b: 100n, c: 5n }, {});
+    const target = strategy.propose(state, makePortfolio([freeTranche("t0")]));
+    expect(target.has("b")).toBe(false);
+    expectSumsToWad(target);
+  });
+});
+
+describe("randomRotator", () => {
+  it("draws exactly poolsPerDraw distinct pools, equal split", () => {
+    const strategy = randomRotator({ seed: "3", poolsPerDraw: 2 });
+    const state = fakeState({ a: 1n, b: 1n, c: 1n, d: 1n }, {});
+    const target = strategy.propose(state, makePortfolio([freeTranche("t0")]));
+    expectSumsToWad(target);
+    const nonZero = [...target.values()].filter((v) => v > 0n);
+    expect(nonZero.length).toBe(2);
+  });
+
+  it("clamps poolsPerDraw to the universe size", () => {
+    const strategy = randomRotator({ seed: "3", poolsPerDraw: 10 });
+    const target = strategy.propose(fakeState({ a: 1n, b: 1n }, {}), makePortfolio([freeTranche("t0")]));
+    expect([...target.values()].filter((v) => v > 0n).length).toBe(2);
+  });
+
+  it("replays identically from the same seed (fresh instance)", () => {
+    const state = fakeState({ a: 1n, b: 1n, c: 1n, d: 1n, e: 1n }, {});
+    const run = (seed: string) => {
+      const strategy = randomRotator({ seed, poolsPerDraw: 2 });
+      const draws: string[] = [];
+      for (let i = 0; i < 10; i += 1) {
+        const target = strategy.propose(state, makePortfolio([freeTranche("t0")]));
+        draws.push([...target.entries()].filter(([, v]) => v > 0n).map(([p]) => p).sort().join(","));
+      }
+      return draws;
+    };
+    expect(run("11")).toEqual(run("11"));
+    expect(run("11")).not.toEqual(run("12"));
+  });
+
+  it("rejects a non-positive poolsPerDraw", () => {
+    expect(() => randomRotator({ poolsPerDraw: 0 })).toThrow(/positive integer/);
+  });
+});
+
+describe("momentumChaser", () => {
+  it("follows the standing crowd on the first call, uniform on an empty market", () => {
+    const strategy = momentumChaser();
+    const crowded = strategy.propose(
+      fakeState({ a: 0n, b: 0n }, { a: 3n * WAD, b: WAD }),
+      makePortfolio([freeTranche("t0")]),
+    );
+    expect(crowded.get("a")).toBe((WAD * 3n) / 4n);
+    const fresh = momentumChaser();
+    const uniform = fresh.propose(fakeState({ a: 0n, b: 0n }, { a: 0n, b: 0n }), makePortfolio([freeTranche("t0")]));
+    expect(uniform.get("a")).toBe(WAD / 2n);
+  });
+
+  it("chases weight inflow one call late", () => {
+    const strategy = momentumChaser();
+    const portfolio = makePortfolio([freeTranche("t0")]);
+    strategy.propose(fakeState({ a: 0n, b: 0n }, { a: WAD, b: WAD }), portfolio);
+    // All new weight went to b since the last look: chases b exclusively.
+    const target = strategy.propose(fakeState({ a: 0n, b: 0n }, { a: WAD, b: 5n * WAD }), portfolio);
+    expect(target.get("b")).toBe(WAD);
+    expect(target.get("a")).toBe(0n);
+  });
+
+  it("falls back to the standing crowd when nothing flowed in", () => {
+    const strategy = momentumChaser();
+    const portfolio = makePortfolio([freeTranche("t0")]);
+    strategy.propose(fakeState({ a: 0n, b: 0n }, { a: 3n * WAD, b: WAD }), portfolio);
+    const target = strategy.propose(fakeState({ a: 0n, b: 0n }, { a: 3n * WAD, b: WAD }), portfolio);
+    expect(target.get("a")).toBe((WAD * 3n) / 4n);
+  });
+});
+
+describe("ewmaForecast", () => {
+  it("allocates proportional to revenue under constant rates", () => {
+    const strategy = ewmaForecast();
+    const state = fakeState({ a: 30n, b: 10n }, {});
+    const target = strategy.propose(state, makePortfolio([freeTranche("t0")]));
+    expectSumsToWad(target);
+    expect(target.get("a")).toBe((WAD * 3n) / 4n);
+  });
+
+  it("smooths a rate change: allocation lags the new proportions", () => {
+    const strategy = ewmaForecast({ alphaWad: WAD / 2n });
+    const portfolio = makePortfolio([freeTranche("t0")]);
+    strategy.propose(fakeState({ a: 10n, b: 10n }, {}), portfolio);
+    // Rates flip to 30/10; with alpha=0.5 the EWMA only moves halfway.
+    const target = strategy.propose(fakeState({ a: 30n, b: 10n }, {}), portfolio);
+    expect(target.get("a")! > WAD / 2n).toBe(true);
+    expect(target.get("a")! < (WAD * 3n) / 4n).toBe(true);
+    // alpha = WAD reacts instantly.
+    const instant = ewmaForecast({ alphaWad: WAD });
+    instant.propose(fakeState({ a: 10n, b: 10n }, {}), portfolio);
+    expect(instant.propose(fakeState({ a: 30n, b: 10n }, {}), portfolio).get("a")).toBe((WAD * 3n) / 4n);
+  });
+
+  it("rejects an out-of-range alpha", () => {
+    expect(() => ewmaForecast({ alphaWad: WAD + 1n })).toThrow(/alphaWad/);
+  });
+});
+
+describe("crowdingAvoider", () => {
+  it("prefers the less crowded pool at equal revenue", () => {
+    const strategy = crowdingAvoider();
+    const state = fakeState({ a: WAD, b: WAD }, { a: 10n * WAD, b: 1_000n * WAD });
+    const target = strategy.propose(state, makePortfolio([freeTranche("t0")]));
+    expectSumsToWad(target);
+    expect(target.get("a")! > target.get("b")!).toBe(true);
+  });
+
+  it("subtracts its own standing weight from the divisor", () => {
+    const strategy = crowdingAvoider();
+    const tranche: TrancheState = {
+      id: "t0",
+      positionWeight: 90n * WAD,
+      lastActionAt: 0,
+      allocation: new Map([["a", WAD]]),
+    };
+    // Pool a's weight is 100 but 90 is ours -> external 10, same as b's.
+    const state = fakeState({ a: WAD, b: WAD }, { a: 100n * WAD, b: 10n * WAD });
+    const target = strategy.propose(state, makePortfolio([tranche]));
+    expect(target.get("a")).toBe(target.get("b"));
+  });
+
+  it("floors the divisor on empty pools", () => {
+    const strategy = crowdingAvoider({ floorWeightWad: 5n * WAD });
+    const state = fakeState({ a: WAD, b: WAD }, { a: 0n, b: 10n * WAD });
+    const target = strategy.propose(state, makePortfolio([freeTranche("t0")]));
+    // a scored at revenue/5, b at revenue/10: a preferred but finite.
+    expect(target.get("a")! > target.get("b")!).toBe(true);
+    expect(() => crowdingAvoider({ floorWeightWad: 0n })).toThrow(/positive/);
+  });
+});
+
+describe("banditAllocator", () => {
+  it("proposes uniform before any observation", () => {
+    const strategy = banditAllocator();
+    const target = strategy.propose(fakeState({ a: 10n, b: 10n }, {}), makePortfolio([freeTranche("t0")]));
+    expect(target.get("a")).toBe(WAD / 2n);
+  });
+
+  it("exploits the argmax estimate at epsilon 0", () => {
+    const strategy = banditAllocator({ epsilonWad: 0n });
+    const held: TrancheState = {
+      id: "t0",
+      positionWeight: WAD,
+      lastActionAt: 0,
+      allocation: new Map([["a", WAD / 2n], ["b", WAD / 2n]]),
+    };
+    const portfolio = makePortfolio([held]);
+    const state = fakeState({ a: 30n, b: 10n }, { a: WAD, b: WAD });
+    const target = strategy.propose(state, portfolio);
+    expect(target.get("a")).toBe(WAD);
+    expect(target.size).toBe(1);
+  });
+
+  it("always explores at epsilon WAD, still summing to WAD", () => {
+    const strategy = banditAllocator({ epsilonWad: WAD, seed: "5" });
+    const held: TrancheState = {
+      id: "t0",
+      positionWeight: WAD,
+      lastActionAt: 0,
+      allocation: new Map([["a", WAD]]),
+    };
+    for (let i = 0; i < 5; i += 1) {
+      const target = strategy.propose(
+        fakeState({ a: 30n, b: 10n, c: 1n }, { a: WAD, b: WAD, c: WAD }),
+        makePortfolio([held]),
+      );
+      expectSumsToWad(target);
+      expect(target.size).toBe(1);
+    }
+  });
+
+  it("replays identically from the same seed (fresh instance)", () => {
+    const held: TrancheState = {
+      id: "t0",
+      positionWeight: WAD,
+      lastActionAt: 0,
+      allocation: new Map([["a", WAD]]),
+    };
+    const run = (seed: string) => {
+      const strategy = banditAllocator({ seed, epsilonWad: WAD / 2n });
+      const picks: string[] = [];
+      for (let i = 0; i < 12; i += 1) {
+        const target = strategy.propose(
+          fakeState({ a: 3n, b: 2n, c: 1n }, { a: WAD, b: WAD, c: WAD }),
+          makePortfolio([held]),
+        );
+        picks.push([...target.keys()].join(","));
+      }
+      return picks;
+    };
+    expect(run("9")).toEqual(run("9"));
+  });
+
+  it("rejects out-of-range epsilon and alpha", () => {
+    expect(() => banditAllocator({ epsilonWad: WAD + 1n })).toThrow(/epsilonWad/);
+    expect(() => banditAllocator({ alphaWad: -1n })).toThrow(/alphaWad/);
+  });
+});
+
+describe("new strategies: proposals always sum to WAD (property)", () => {
+  const factories: Record<string, () => ReturnType<typeof uniformStatic>> = {
+    uniformStatic: () => uniformStatic(),
+    randomRotator: () => randomRotator({ seed: "2" }),
+    momentumChaser: () => momentumChaser(),
+    ewmaForecast: () => ewmaForecast(),
+    crowdingAvoider: () => crowdingAvoider(),
+    banditAllocator: () => banditAllocator({ seed: "2" }),
+  };
+  for (const [name, make] of Object.entries(factories)) {
+    it(name, () => {
+      fc.assert(
+        fc.property(
+          fc.array(
+            fc.tuple(
+              fc.string({ minLength: 1, maxLength: 4 }),
+              fc.bigInt({ min: 0n, max: 10n ** 24n }),
+              fc.bigInt({ min: 0n, max: 10n ** 24n }),
+            ),
+            { minLength: 1, maxLength: 6 },
+          ),
+          (rows) => {
+            const rates = Object.fromEntries(rows.map(([p, r]) => [p, r]));
+            const weights = Object.fromEntries(rows.map(([p, , w]) => [p, w]));
+            const strategy = make();
+            const target = strategy.propose(fakeState(rates, weights), makePortfolio([freeTranche("t0")]));
+            expectSumsToWad(target);
+          },
+        ),
+        { numRuns: 40 },
+      );
+    });
+  }
 });
