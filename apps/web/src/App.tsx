@@ -24,6 +24,7 @@ import {
   DEFAULT_ARENA,
   arenaConfigFromHash,
   arenaConfigToHash,
+  matchArenaPreset,
   type ArenaRunConfig,
 } from "./lib/arenaConfig.js";
 import type { DisplayArenaResult, DisplayResult, WorkerResponse } from "./lib/serialize.js";
@@ -101,6 +102,16 @@ function viewSuffix(view: HeatmapView): string {
   return "";
 }
 
+/** Days of dataset age past the staleness threshold, or null when fresh or
+ *  not applicable (synthetic data carries no real generation time). */
+function stalenessDays(dataKind: string, generatedAt: string | undefined): number | null {
+  if (dataKind !== "historical" || !generatedAt) return null;
+  const age = Date.now() - Date.parse(generatedAt);
+  if (!Number.isFinite(age)) return null;
+  const ageDays = age / 86_400_000;
+  return ageDays > STALE_AFTER_DAYS ? Math.floor(ageDays) : null;
+}
+
 /** Live replay state: the last good result stays on the instruments while a
  *  newer run computes (or a half-typed config errors), no flicker, no button. */
 interface LiveState<R> {
@@ -129,7 +140,10 @@ export function App() {
         if (c) setConfig(c);
       } else if (v === "arena") {
         const c = arenaConfigFromHash(location.hash);
-        if (c) setArenaConfig(c);
+        if (c) {
+          setArenaConfig(c);
+          setActiveArenaPreset(matchArenaPreset(c));
+        }
       }
     };
     window.addEventListener("popstate", onPop);
@@ -138,7 +152,11 @@ export function App() {
   const [live, setLive] = useState<LiveState<DisplayResult>>({ result: null, elapsedMs: 0, running: false, error: null });
   const [arenaLive, setArenaLive] = useState<LiveState<DisplayArenaResult>>({ result: null, elapsedMs: 0, running: false, error: null });
   const [activePreset, setActivePreset] = useState<string | null>(null);
-  const [activeArenaPreset, setActiveArenaPreset] = useState<string | null>("battle-royale");
+  // derived from the loaded config, never assumed: a shared custom #arena=
+  // link must not light up a preset button it doesn't match
+  const [activeArenaPreset, setActiveArenaPreset] = useState<string | null>(() =>
+    matchArenaPreset(arenaConfigFromHash(location.hash) ?? DEFAULT_ARENA),
+  );
   const [copied, setCopied] = useState(false);
   const workerRef = useRef<Worker | null>(null);
   const datasetRef = useRef<unknown | null>(null);
@@ -146,6 +164,11 @@ export function App() {
   const seqRef = useRef(0);
 
   const busyRef = useRef(false);
+  // per-kind key of the last successfully computed config: a re-fire whose
+  // config already produced the on-screen result (e.g. a console↔arena view
+  // switch) skips the worker instead of recomputing or cancelling anything
+  const lastGoodKeyRef = useRef<{ run: string | null; arena: string | null }>({ run: null, arena: null });
+  const postedRef = useRef<{ seq: number; kind: "run" | "arena"; key: string } | null>(null);
 
   const spawnWorker = useCallback(() => {
     const worker = new Worker(new URL("./worker/backtest.worker.ts", import.meta.url), { type: "module" });
@@ -154,8 +177,10 @@ export function App() {
       if (msg.seq !== seqRef.current) return; // stale run, a newer config superseded it
       busyRef.current = false;
       if (msg.type === "done") {
+        if (postedRef.current?.seq === msg.seq) lastGoodKeyRef.current.run = postedRef.current.key;
         setLive({ result: msg.result, elapsedMs: msg.elapsedMs, running: false, error: null });
       } else if (msg.type === "arenaDone") {
+        if (postedRef.current?.seq === msg.seq) lastGoodKeyRef.current.arena = postedRef.current.key;
         setArenaLive({ result: msg.result, elapsedMs: msg.elapsedMs, running: false, error: null });
       } else if (msg.request === "arena") {
         setArenaLive((prev) => ({ ...prev, running: false, error: msg.message }));
@@ -180,6 +205,30 @@ export function App() {
     const timer = setTimeout(() => {
       void (async () => {
         if (!workerRef.current) return;
+        const kind: "run" | "arena" = arenaVisible ? "arena" : "run";
+        const key = arenaVisible ? arenaConfigToHash(arenaConfig) : configToHash(config);
+        // keep the visible page's shareable URL current, but never rewrite
+        // another page's path
+        const syncUrl = () => {
+          const pathView = viewFromPath();
+          if (pathView === "console" && !arenaVisible) {
+            history.replaceState(null, "", key); // replace, never push, no history spam
+          } else if (pathView === "arena" && arenaVisible) {
+            history.replaceState(null, "", arenaUrl(key));
+          }
+        };
+        // this exact config's result is already delivered (e.g. a view
+        // switch, or an edit reverted): don't recompute. Any in-flight run
+        // is now superseded by the cached result — invalidate it so its
+        // response can't land over the reverted config, and settle the
+        // running flags it may have raised.
+        if (lastGoodKeyRef.current[kind] === key) {
+          syncUrl();
+          seqRef.current += 1;
+          setLive((prev) => ({ ...prev, running: false }));
+          setArenaLive((prev) => ({ ...prev, running: false }));
+          return;
+        }
         const seq = ++seqRef.current;
         if (arenaVisible) setArenaLive((prev) => ({ ...prev, running: true }));
         else setLive((prev) => ({ ...prev, running: true }));
@@ -195,14 +244,7 @@ export function App() {
             historical = datasetRef.current;
           }
           if (seq !== seqRef.current) return; // superseded while fetching
-          // keep the visible page's shareable URL current, but never rewrite
-          // another page's path
-          const pathView = viewFromPath();
-          if (pathView === "console" && !arenaVisible) {
-            history.replaceState(null, "", configToHash(config)); // replace, never push, no history spam
-          } else if (pathView === "arena" && arenaVisible) {
-            history.replaceState(null, "", arenaUrl(arenaConfigToHash(arenaConfig)));
-          }
+          syncUrl();
           // true cancellation: a worker mid-computation can't be interrupted, so a
           // superseding run kills it and posts to a fresh one instead of queueing
           if (busyRef.current) {
@@ -210,11 +252,13 @@ export function App() {
             spawnWorker();
           }
           busyRef.current = true;
-          if (arenaVisible) {
-            workerRef.current?.postMessage({ type: "arena", seq, config: arenaConfig, historical });
-          } else {
-            workerRef.current?.postMessage({ type: "run", seq, config, historical });
-          }
+          postedRef.current = { seq, kind, key };
+          workerRef.current?.postMessage({
+            type: kind,
+            seq,
+            config: arenaVisible ? arenaConfig : config,
+            historical,
+          });
         } catch (err) {
           if (seq !== seqRef.current) return;
           const message = err instanceof Error ? err.message : String(err);
@@ -257,16 +301,14 @@ export function App() {
     setView("arena");
   }, [arenaConfig]);
 
-  const staleness = useMemo(() => {
-    // only meaningful for the published historical dataset (synthetic data is
-    // deterministic and carries no real generation time)
-    if (config.data.kind !== "historical") return null;
-    if (!live.result?.datasetGeneratedAt) return null;
-    const age = Date.now() - Date.parse(live.result.datasetGeneratedAt);
-    if (!Number.isFinite(age)) return null;
-    const ageDays = age / 86_400_000;
-    return ageDays > STALE_AFTER_DAYS ? Math.floor(ageDays) : null;
-  }, [live.result, config.data.kind]);
+  const staleness = useMemo(
+    () => stalenessDays(config.data.kind, live.result?.datasetGeneratedAt),
+    [live.result, config.data.kind],
+  );
+  const arenaStaleness = useMemo(
+    () => stalenessDays(arenaConfig.data.kind, arenaLive.result?.datasetGeneratedAt),
+    [arenaLive.result, arenaConfig.data.kind],
+  );
 
   const preset = PRESETS.find((p) => p.id === activePreset);
   const arenaPreset = ARENA_PRESETS.find((p) => p.id === activeArenaPreset);
@@ -351,6 +393,12 @@ export function App() {
           </section>
 
           <section aria-label="arena standings">
+            {arenaStaleness !== null && (
+              <div className="banner">
+                Historical dataset is {arenaStaleness} days old, replaying the last published data (the data
+                pipeline refreshes weekly).
+              </div>
+            )}
             {arenaLive.error && (
               <div className="banner alert" role="status">
                 Arena run failed: {arenaLive.error}

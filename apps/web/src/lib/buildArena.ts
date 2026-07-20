@@ -26,13 +26,36 @@ export function buildAndRunArena(config: ArenaRunConfig, historical: unknown | n
   if (config.agents.length > MAX_AGENTS) {
     throw new Error(`arena supports at most ${MAX_AGENTS} agents`);
   }
+  // Configs travel through forms and share URLs, so numerics can arrive as
+  // NaN (cleared input) or null (JSON.stringify of NaN); reject them with a
+  // readable message before BigInt() turns them into opaque RangeErrors.
+  for (const a of config.agents) {
+    if (!Number.isInteger(a.trancheCount) || a.trancheCount < 1) {
+      throw new Error(`agent "${a.label || a.id}": tranches must be a positive whole number`);
+    }
+    if (!Number.isInteger(a.trancheTokens) || a.trancheTokens < 1) {
+      throw new Error(`agent "${a.label || a.id}": tokens / tranche must be a positive whole number`);
+    }
+  }
+  if (!Number.isInteger(config.run.durationWeeks) || config.run.durationWeeks < 1) {
+    throw new Error("duration must be a positive whole number of weeks");
+  }
   // The crowd scales off everyone's combined weight: the roster IS the
   // "portfolio" from the scenario's point of view.
   let portfolioWeight: Wad = 0n;
   for (const a of config.agents) {
     portfolioWeight += BigInt(a.trancheTokens) * WAD * BigInt(a.trancheCount);
   }
-  const scenario = buildScenario(config, portfolioWeight, historical);
+  // The arena's simultaneous-move neutrality contract assumes per-position
+  // cooldown gating (see runArena's docstring): under a global cooldown the
+  // first rotation at a tick would lock every later agent out, making
+  // roster order economically decisive. Force per-position regardless of
+  // what a hand-edited share URL carries.
+  const scenario = buildScenario(
+    { ...config, model: { ...config.model, cooldownGranularity: "position" } },
+    portfolioWeight,
+    historical,
+  );
   const { model, crowd, startTime, durationSec } = scenario;
 
   const agents: ArenaAgentSpec[] = config.agents.map((a) => ({

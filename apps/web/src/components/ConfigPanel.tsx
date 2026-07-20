@@ -14,13 +14,17 @@ const COOLDOWNS: { sec: number; label: string }[] = [
   { sec: 2, label: "1 block (2 s)" },
 ];
 
-/** Protocol-model panel (economy, cooldown, caps, decay, emissions). */
+/** Protocol-model panel (economy, cooldown, caps, decay, emissions).
+ *  `showGranularity: false` hides the cooldown-scope control for surfaces
+ *  that must pin per-position gating (the arena's fairness contract). */
 export function ModelPanel({
   model,
   onChange,
+  showGranularity = true,
 }: {
   model: RunConfig["model"];
   onChange: (next: RunConfig["model"]) => void;
+  showGranularity?: boolean;
 }) {
   return (
     <div className="panel">
@@ -52,22 +56,24 @@ export function ModelPanel({
               ))}
             </select>
           </div>
-          <div className="field">
-            <label htmlFor="granularity">
-              cooldown scope
-              <span className="hint">per-position is the published plan (F2)</span>
-            </label>
-            <select
-              id="granularity"
-              value={model.cooldownGranularity}
-              onChange={(e) =>
-                onChange({ ...model, cooldownGranularity: e.target.value as "position" | "global" })
-              }
-            >
-              <option value="position">per position</option>
-              <option value="global">global</option>
-            </select>
-          </div>
+          {showGranularity && (
+            <div className="field">
+              <label htmlFor="granularity">
+                cooldown scope
+                <span className="hint">per-position is the published plan (F2)</span>
+              </label>
+              <select
+                id="granularity"
+                value={model.cooldownGranularity}
+                onChange={(e) =>
+                  onChange({ ...model, cooldownGranularity: e.target.value as "position" | "global" })
+                }
+              >
+                <option value="position">per position</option>
+                <option value="global">global</option>
+              </select>
+            </div>
+          )}
           <div className="field">
             <label htmlFor="caps">gauge caps</label>
             <input

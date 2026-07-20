@@ -155,6 +155,49 @@ describe("runArena", () => {
     expect(run()).toEqual(run());
   });
 
+  it("always samples the run end, even off the sampling grid", () => {
+    const revenue = constantRevenue({ a: 10n * WAD });
+    // 7 steps with a 2-step sampling interval: the grid lands on steps 2, 4,
+    // 6 and would miss the end without the forced final sample.
+    const result = continuousArena(revenue, {
+      durationSec: 7 * HOUR,
+      stepSec: HOUR,
+      sampleIntervalSec: 2 * HOUR,
+      cooldownSec: HOUR,
+      agents: [
+        { id: "solo", strategy: uniformStatic(), trancheCount: 1, trancheWeight: 100n * WAD },
+      ],
+    });
+    expect(result.times.at(-1)).toBe(T0 + 7 * HOUR);
+    for (const agent of result.agents) {
+      expect(agent.equity.at(-1)).toBe(agent.totalReturn);
+      expect(agent.equity).toHaveLength(result.times.length);
+    }
+    expect(result.marketBenchmark.at(-1)).toBe(result.marketBenchmarkReturn);
+    expect(result.oracleBenchmark?.at(-1)).toBe(result.oracleReturn);
+  });
+
+  it("excludes never-weighted pools from the oracle's revenue shares", () => {
+    // Pool b produces revenue but never carries weight: its revenue reaches
+    // nobody and must not dilute pool a's share of the foresight portfolio.
+    const revenue = constantRevenue({ a: 100n * WAD, b: 400n * WAD });
+    const weight = 100n * WAD;
+    const result = continuousArena(revenue, {
+      durationSec: DAY,
+      stepSec: HOUR,
+      cooldownSec: HOUR,
+      agents: [
+        { id: "solo", strategy: uniformStatic({ pools: ["a"] }), trancheCount: 1, trancheWeight: weight },
+      ],
+    });
+    // share_a === WAD, so the unit-weight oracle earns delta_a/weight each
+    // step; the bootstrap rotation lands before the first advance, so every
+    // step has w_a === weight.
+    const deltaPerStep = 100n * WAD * 3_600n;
+    const expected = 24n * ((deltaPerStep * WAD) / weight);
+    expect(result.oracleReturn).toBe(expected);
+  });
+
   it("validates its inputs", () => {
     const revenue = constantRevenue({ a: WAD });
     const spec = { id: "x", strategy: uniformStatic(), trancheCount: 1, trancheWeight: WAD };

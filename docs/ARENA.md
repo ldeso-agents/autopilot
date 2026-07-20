@@ -39,7 +39,12 @@ bigint-identical outcomes regardless of roster position; a test asserts this.
 model-level `cooldownSec`, so per-agent cooldowns are not expressible in v1 — a shorter
 per-agent scheduler cooldown would only manufacture blocked submissions. Agents differ
 on the more interesting axis anyway: `strategy.cadenceSec` (how often they look) versus
-the shared cooldown (how often they may act).
+the shared cooldown (how often they may act). The neutrality argument additionally
+requires **per-position** cooldown *granularity*: under the model's `"global"` scope the
+first successful rotation at a tick starts the shared cooldown and locks every later
+agent out, making roster order economically decisive. The web builder therefore forces
+`cooldownGranularity: "position"` for arena runs (the control is hidden on the arena
+page), and the engine documents the assumption.
 
 **Benchmarks.**
 
@@ -55,9 +60,11 @@ the shared cooldown (how often they may act).
   versus the console's displacing oracle, and when the crowd is already well-aligned
   the (foresight − market) gap is small, which makes the derived *capture* ratio
   `(agent − market)/(foresight − market)` large in magnitude — read capture as a
-  direction-and-rough-scale indicator, not a percentage of a hard ceiling. Pools with
-  revenue but zero allocated weight are skipped (that revenue reaches nobody; the model
-  books it as dust).
+  direction-and-rough-scale indicator, not a percentage of a hard ceiling. Pools that
+  carried no weight at any step of an epoch are excluded from that epoch's revenue
+  shares entirely (their revenue reaches nobody — the model books it as dust — so it
+  must not dilute the held pools' shares); zero-weight steps of an otherwise-held pool
+  are skipped.
 - The single-run F21 on/off-target methodology is deliberately **not** computed per
   agent: it is a one-portfolio diagnostic and adds noise in a shared market.
 
