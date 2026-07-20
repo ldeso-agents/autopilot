@@ -62,11 +62,31 @@ export function probeStrategy(kind: StrategyKind): Strategy {
   return STRATEGY_FACTORIES[kind]({});
 }
 
-/** Wad-typed config fields travel as decimal strings in JSON; convert here. */
+/**
+ * Wad-typed config fields travel as decimal strings in JSON; convert here.
+ * Configs arrive from free-text form fields and hand-shareable URLs, so
+ * invalid entries are DROPPED (the factory default applies) rather than
+ * passed through, where they would either throw mid-run (`BigInt("0.3")`,
+ * `BigInt("abc")` for seeds) or silently corrupt it (a NaN-turned-null
+ * cadence disables the strategy's whole invocation grid).
+ */
 export function reviveStrategyConfig(config: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(config)) {
-    out[key] = key.endsWith("Wad") && typeof value === "string" ? BigInt(value) : value;
+    if (value === null || value === undefined) continue;
+    if (typeof value === "number" && !Number.isFinite(value)) continue;
+    if (key.endsWith("Wad") && typeof value === "string") {
+      const trimmed = value.trim();
+      if (!/^\d+$/.test(trimmed)) continue; // not a Wad integer string
+      out[key] = BigInt(trimmed);
+      continue;
+    }
+    if (key === "seed" && typeof value === "string") {
+      const digits = value.replace(/\D/g, "");
+      if (digits) out[key] = digits;
+      continue; // empty after stripping: factory default seed
+    }
+    out[key] = value;
   }
   return out;
 }

@@ -127,6 +127,13 @@ export function encodeArenaConfig(config: ArenaRunConfig): string {
   return toBase64Url(JSON.stringify(config));
 }
 
+/** The preset id whose config equals `config` exactly, else null — so the
+ *  preset bar never claims a scenario the loaded roster doesn't match. */
+export function matchArenaPreset(config: ArenaRunConfig): string | null {
+  const encoded = encodeArenaConfig(config);
+  return ARENA_PRESETS.find((p) => encodeArenaConfig(p.config) === encoded)?.id ?? null;
+}
+
 export function decodeArenaConfig(encoded: string): ArenaRunConfig {
   const parsed: unknown = JSON.parse(fromBase64Url(encoded));
   if (typeof parsed !== "object" || parsed === null) throw new Error("invalid arena config");

@@ -9,6 +9,7 @@ import {
   arenaConfigToHash,
   decodeArenaConfig,
   encodeArenaConfig,
+  matchArenaPreset,
 } from "../src/lib/arenaConfig.js";
 
 describe("arena-config URL serialization", () => {
@@ -33,6 +34,18 @@ describe("arena-config URL serialization", () => {
 
   it("hash payload is URL-safe base64 only", () => {
     expect(arenaConfigToHash(DEFAULT_ARENA)).toMatch(/^#arena=[A-Za-z0-9_-]+$/);
+  });
+
+  it("matches presets exactly and rejects near-misses", () => {
+    for (const preset of ARENA_PRESETS) {
+      expect(matchArenaPreset(preset.config)).toBe(preset.id);
+    }
+    expect(matchArenaPreset(DEFAULT_ARENA)).toBe("battle-royale");
+    const custom = {
+      ...DEFAULT_ARENA,
+      agents: [{ ...DEFAULT_ARENA.agents[0]!, trancheTokens: 123_456 }],
+    };
+    expect(matchArenaPreset(custom)).toBeNull();
   });
 
   it("rejects garbage hashes without throwing", () => {

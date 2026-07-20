@@ -53,9 +53,19 @@ export function SchemaForm({ schema, value, onChange }: Props) {
                 min={prop.minimum}
                 max={prop.maximum}
                 step={prop.type === "integer" ? 1 : "any"}
-                onChange={(e) =>
-                  set(key, prop.type === "integer" ? Math.round(e.target.valueAsNumber) : e.target.valueAsNumber)
-                }
+                onChange={(e) => {
+                  const v = prop.type === "integer" ? Math.round(e.target.valueAsNumber) : e.target.valueAsNumber;
+                  if (Number.isNaN(v)) {
+                    // cleared field: drop the key so the schema default
+                    // applies, never store NaN (it would survive the share
+                    // URL as null and silently disable the strategy)
+                    const next = { ...value };
+                    delete next[key];
+                    onChange(next);
+                  } else {
+                    set(key, v);
+                  }
+                }}
               />
             )}
           </div>

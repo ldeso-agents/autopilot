@@ -42,4 +42,31 @@ describe("buildAndRunArena", () => {
     };
     expect(() => buildAndRunArena(oversized, null)).toThrow(/at most/);
   });
+
+  it("rejects NaN/null numerics with readable messages instead of BigInt errors", () => {
+    const withTokens = (trancheTokens: number) => ({
+      ...DEFAULT_ARENA,
+      agents: [{ ...DEFAULT_ARENA.agents[0]!, trancheTokens }],
+    });
+    expect(() => buildAndRunArena(withTokens(Number.NaN), null)).toThrow(/tokens \/ tranche/);
+    expect(() => buildAndRunArena(withTokens(null as unknown as number), null)).toThrow(/tokens \/ tranche/);
+    const badDuration = { ...DEFAULT_ARENA, run: { ...DEFAULT_ARENA.run, durationWeeks: Number.NaN } };
+    expect(() => buildAndRunArena(badDuration, null)).toThrow(/duration/);
+  });
+
+  it("forces per-position cooldowns: global granularity cannot bias roster order", { timeout: 60_000 }, () => {
+    // Under a real global cooldown, the first agent's rotation at each shared
+    // tick would lock the second out entirely (mass blockedSubmissions).
+    const config = {
+      ...DEFAULT_ARENA,
+      model: { ...DEFAULT_ARENA.model, cooldownGranularity: "global" as const },
+      agents: DEFAULT_ARENA.agents.slice(0, 2),
+      run: { ...DEFAULT_ARENA.run, durationWeeks: 2 },
+    };
+    const run = buildAndRunArena(config, null);
+    for (const agent of run.result.agents) {
+      expect(agent.rotations).toBeGreaterThan(0);
+      expect(agent.blockedSubmissions).toBe(0);
+    }
+  });
 });

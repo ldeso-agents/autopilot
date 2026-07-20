@@ -22,10 +22,18 @@ function nextAgentId(agents: readonly ArenaAgentConfig[]): string {
   }
 }
 
+/** Rounded numeric input value, or null for a cleared field (NaN). */
+function intOrNull(raw: number): number | null {
+  const v = Math.round(raw);
+  return Number.isNaN(v) ? null : v;
+}
+
 export function ArenaPanel({ config, onChange }: Props) {
   const patch = (p: Partial<ArenaRunConfig>) => onChange({ ...config, ...p });
   const patchAgent = (index: number, next: ArenaAgentConfig) =>
-    patch({ agents: config.agents.with(index, next) });
+    // .map instead of Array.prototype.with: this runs on the main thread and
+    // the es2022 build target does not downlevel the ES2023 method
+    patch({ agents: config.agents.map((a, i) => (i === index ? next : a)) });
 
   const addAgent = () => {
     const id = nextAgentId(config.agents);
@@ -121,9 +129,10 @@ export function ArenaPanel({ config, onChange }: Props) {
                   min={1}
                   max={8}
                   value={agent.trancheCount}
-                  onChange={(e) =>
-                    patchAgent(index, { ...agent, trancheCount: Math.round(e.target.valueAsNumber) })
-                  }
+                  onChange={(e) => {
+                    const v = intOrNull(e.target.valueAsNumber);
+                    if (v !== null) patchAgent(index, { ...agent, trancheCount: v });
+                  }}
                 />
               </div>
               <div className="field">
@@ -133,9 +142,10 @@ export function ArenaPanel({ config, onChange }: Props) {
                   type="number"
                   min={1}
                   value={agent.trancheTokens}
-                  onChange={(e) =>
-                    patchAgent(index, { ...agent, trancheTokens: Math.round(e.target.valueAsNumber) })
-                  }
+                  onChange={(e) => {
+                    const v = intOrNull(e.target.valueAsNumber);
+                    if (v !== null) patchAgent(index, { ...agent, trancheTokens: v });
+                  }}
                 />
               </div>
             </div>
@@ -146,7 +156,9 @@ export function ArenaPanel({ config, onChange }: Props) {
         </button>
       </div>
 
-      <ModelPanel model={config.model} onChange={(model) => patch({ model })} />
+      {/* granularity hidden: the arena's fairness contract requires
+          per-position cooldowns (buildArena forces it regardless) */}
+      <ModelPanel model={config.model} onChange={(model) => patch({ model })} showGranularity={false} />
       <MarketDataPanel data={config.data} crowd={config.crowd} onChange={(p) => patch(p)} />
 
       <div className="panel">
@@ -159,7 +171,10 @@ export function ArenaPanel({ config, onChange }: Props) {
             min={1}
             max={52}
             value={config.run.durationWeeks}
-            onChange={(e) => patch({ run: { ...config.run, durationWeeks: Math.round(e.target.valueAsNumber) } })}
+            onChange={(e) => {
+              const v = intOrNull(e.target.valueAsNumber);
+              if (v !== null) patch({ run: { ...config.run, durationWeeks: v } });
+            }}
           />
         </div>
       </div>

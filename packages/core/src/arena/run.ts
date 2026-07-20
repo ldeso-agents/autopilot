@@ -14,6 +14,13 @@
  * submission order. The fixed order exists only to make blocked-submission
  * accounting deterministic.
  *
+ * The neutrality argument assumes PER-POSITION cooldown gating. Under a
+ * model with GLOBAL cooldown granularity the first successful rotation at a
+ * tick starts the shared cooldown and locks every later agent out
+ * (AllocationBlockedError), making roster order economically decisive.
+ * Arena models must therefore use per-position cooldowns; the web builder
+ * enforces this (buildArena forces cooldownGranularity: "position").
+ *
  * Determinism: fixed agent order + frozen snapshots + seeded strategy
  * closures + integer-only accounting make `runArena` a pure function of its
  * inputs; two runs from freshly constructed models and strategies are
@@ -120,8 +127,11 @@ export interface ArenaResult {
    * infinitesimal portfolio holding each weekly epoch's pools in proportion
    * to that epoch's realized revenue, earning delta·share/poolWeight per
    * step without adding its own weight to the denominator. Slightly
-   * optimistic versus the displacing single-run oracle; pools with revenue
-   * but zero weight are skipped (their revenue reaches nobody).
+   * optimistic versus the displacing single-run oracle. Pools that carried
+   * no weight at any step of an epoch are excluded from that epoch's
+   * revenue shares entirely — their revenue reaches nobody and must not
+   * dilute the held pools' shares; zero-weight steps of an otherwise-held
+   * pool are skipped.
    */
   oracleBenchmark?: Wad[];
   oracleReturn?: Wad;
@@ -250,13 +260,19 @@ export function runArena(model: ProtocolModel, config: ArenaConfig): ArenaResult
   let epochStepDeltas: Wad[][] = [];
   let epochStepWeights: Wad[][] = [];
   let epochRevenue: Wad[] = allocPools.map(() => 0n);
+  let epochHadWeight: boolean[] = allocPools.map(() => false);
   let pendingOracleSamples: { row: number; steps: number }[] = [];
 
   const closeOracleEpoch = (): void => {
+    // Never-weighted pools are excluded from the epoch's shares: their
+    // revenue reaches nobody, so counting it in the denominator would
+    // dilute the held pools and understate the foresight line.
     let totalRev = 0n;
-    for (const rev of epochRevenue) totalRev += rev;
+    for (let p = 0; p < allocPools.length; p += 1) {
+      if (epochHadWeight[p]) totalRev += epochRevenue[p]!;
+    }
     const shares = allocPools.map((_, p) =>
-      totalRev === 0n ? 0n : mulDiv(WAD, epochRevenue[p]!, totalRev),
+      totalRev === 0n || !epochHadWeight[p] ? 0n : mulDiv(WAD, epochRevenue[p]!, totalRev),
     );
     let pi = 0;
     while (pi < pendingOracleSamples.length && pendingOracleSamples[pi]!.steps === 0) {
@@ -281,6 +297,7 @@ export function runArena(model: ProtocolModel, config: ArenaConfig): ArenaResult
     epochStepDeltas = [];
     epochStepWeights = [];
     epochRevenue = allocPools.map(() => 0n);
+    epochHadWeight = allocPools.map(() => false);
     pendingOracleSamples = [];
   };
 
@@ -341,11 +358,16 @@ export function runArena(model: ProtocolModel, config: ArenaConfig): ArenaResult
       epochStepWeights.push(poolWeightsBefore);
       for (let p = 0; p < allocPools.length; p += 1) {
         epochRevenue[p] = epochRevenue[p]! + deltas[p]!;
+        if (poolWeightsBefore[p]! > 0n) epochHadWeight[p] = true;
       }
       if (Math.floor((t + stepSec) / WEEK) > Math.floor(t / WEEK)) closeOracleEpoch();
     }
     if ((t + stepSec - startTime) % sampleIntervalSec === 0) sample(t + stepSec);
   }
+  // The sampling grid need not land on the run end (sampleIntervalSec is a
+  // multiple of stepSec, not necessarily a divisor of durationSec); force a
+  // final sample so the series end where the scalar returns are measured.
+  if (times.length === 0 || times[times.length - 1] !== end) sample(end);
   if (includeOracle) closeOracleEpoch(); // partial final epoch
 
   return {
