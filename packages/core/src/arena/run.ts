@@ -181,6 +181,16 @@ export function runArena(model: ProtocolModel, config: ArenaConfig): ArenaResult
   const cooldownSec = config.cooldownSec ?? DEFAULT_COOLDOWN_SEC;
   const sampleIntervalSec = config.sampleIntervalSec ?? stepSec;
   const crowdUpdateSec = config.crowdUpdateSec ?? stepSec;
+  // Same guard as runBacktest: sampling and crowd updates fire on exact
+  // modulo checks against step-aligned time, so a non-multiple interval
+  // silently under-samples (only the forced final sample would remain) and
+  // freezes the crowd. Reject those configs instead.
+  if (!Number.isInteger(sampleIntervalSec) || sampleIntervalSec <= 0 || sampleIntervalSec % stepSec !== 0) {
+    throw new Error("sampleIntervalSec must be a positive integer multiple of stepSec");
+  }
+  if (!Number.isInteger(crowdUpdateSec) || crowdUpdateSec <= 0 || crowdUpdateSec % stepSec !== 0) {
+    throw new Error("crowdUpdateSec must be a positive integer multiple of stepSec");
+  }
   const includeOracle = config.includeOracle ?? true;
 
   const seen = new Set<string>();

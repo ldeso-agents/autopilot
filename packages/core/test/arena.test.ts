@@ -217,6 +217,23 @@ describe("runArena", () => {
         agents: [{ ...spec, trancheWeight: 0n }],
       }),
     ).toThrow(/trancheWeight/);
+    // same contract as runBacktest: intervals ride the step grid exactly
+    expect(() =>
+      continuousArena(revenue, {
+        durationSec: 2 * HOUR,
+        stepSec: HOUR,
+        sampleIntervalSec: 90 * 60,
+        agents: [spec],
+      }),
+    ).toThrow(/sampleIntervalSec/);
+    expect(() =>
+      continuousArena(revenue, {
+        durationSec: 2 * HOUR,
+        stepSec: HOUR,
+        crowdUpdateSec: 90 * 60,
+        agents: [spec],
+      }),
+    ).toThrow(/crowdUpdateSec/);
   });
 
   it("holds its invariants over random rosters (property)", () => {
