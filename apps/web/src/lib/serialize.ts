@@ -6,6 +6,7 @@
  * floats outside fixture paths).
  */
 import type { BuiltRun } from "./buildRun.js";
+import type { BuiltArena } from "./buildArena.js";
 
 export interface DisplayResult {
   totalReturn: number;
@@ -95,7 +96,88 @@ export function toDisplayResult(run: BuiltRun): DisplayResult {
   };
 }
 
-export type WorkerRequest = { type: "run"; seq: number; config: unknown; historical: unknown | null };
+// ---------------------------------------------------------------------------
+// Arena display shape (same Wad → float boundary rule)
+// ---------------------------------------------------------------------------
+
+export interface DisplayArenaAgent {
+  id: string;
+  label: string;
+  strategyName: string;
+  /** The agent's share of total AGENT weight (not counting the crowd). */
+  weightShare: number;
+  totalReturn: number;
+  returnVsMarket: number;
+  /** (agent − market) / (oracle − market); null when the oracle is absent
+   *  or does not beat the market (the ratio would be meaningless). */
+  capture: number | null;
+  turnover: number;
+  rotations: number;
+  blockedSubmissions: number;
+  equity: number[];
+  /** allocationWeights[sample][poolIdx]: the agent's portfolio fraction. */
+  allocationWeights: number[][];
+}
+
+export interface DisplayArenaResult {
+  times: number[];
+  pools: string[];
+  poolNames: string[];
+  marketBenchmark: number[];
+  marketBenchmarkReturn: number;
+  oracleBenchmark: number[] | null;
+  oracleReturn: number | null;
+  agents: DisplayArenaAgent[];
+  datasetGeneratedAt: string | undefined;
+  dataKind: "historical" | "synthetic";
+  revenueUnit: "usd" | "index";
+  startTime: number;
+  durationSec: number;
+}
+
+export function toDisplayArenaResult(run: BuiltArena): DisplayArenaResult {
+  const { result } = run;
+  let totalAgentWeight = 0n;
+  for (const agent of result.agents) totalAgentWeight += agent.weight;
+  const market = Number(result.marketBenchmarkReturn) / WAD;
+  const oracle = result.oracleReturn === undefined ? null : Number(result.oracleReturn) / WAD;
+  return {
+    times: result.times,
+    pools: result.pools,
+    poolNames: result.pools.map((p) => run.poolNames.get(p) ?? p),
+    marketBenchmark: result.marketBenchmark.map((w) => Number(w) / WAD),
+    marketBenchmarkReturn: market,
+    oracleBenchmark: result.oracleBenchmark?.map((w) => Number(w) / WAD) ?? null,
+    oracleReturn: oracle,
+    agents: result.agents.map((agent) => {
+      const totalReturn = Number(agent.totalReturn) / WAD;
+      return {
+        id: agent.id,
+        label: agent.label,
+        strategyName: agent.strategyName,
+        weightShare: totalAgentWeight === 0n ? 0 : Number(agent.weight) / Number(totalAgentWeight),
+        totalReturn,
+        returnVsMarket: Number(agent.returnVsMarket) / WAD,
+        capture: oracle !== null && oracle > market ? (totalReturn - market) / (oracle - market) : null,
+        turnover: Number(agent.turnover) / WAD,
+        rotations: agent.rotations,
+        blockedSubmissions: agent.blockedSubmissions,
+        equity: agent.equity.map((w) => Number(w) / WAD),
+        allocationWeights: agent.allocationWeights.map((row) => row.map((w) => Number(w) / WAD)),
+      };
+    }),
+    datasetGeneratedAt: run.datasetGeneratedAt,
+    dataKind: run.dataKind,
+    revenueUnit: run.revenueUnit,
+    startTime: run.startTime,
+    durationSec: run.durationSec,
+  };
+}
+
+export type WorkerRequest =
+  | { type: "run"; seq: number; config: unknown; historical: unknown | null }
+  | { type: "arena"; seq: number; config: unknown; historical: unknown | null };
 export type WorkerResponse =
   | { type: "done"; seq: number; result: DisplayResult; elapsedMs: number }
-  | { type: "error"; seq: number; message: string };
+  | { type: "arenaDone"; seq: number; result: DisplayArenaResult; elapsedMs: number }
+  | { type: "error"; seq: number; request: "run" | "arena"; message: string };

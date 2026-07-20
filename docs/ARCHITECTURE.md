@@ -94,7 +94,9 @@ reaches **64%**; adding gauge caps reaches **70%** with off-target (>5pp) fallin
 31%→15%→8% and 5.1% of emissions burned by caps. The earliest cbBTC allocators would have
 earned **43% higher fees** than expected from past performance. Forecast-driven,
 cooldown-aware allocation is therefore the product; this PoC's backtester reproduces the
-on-target-% methodology as its calibration test.
+on-target-% methodology as its calibration test. The competitive counterpart — many
+strategies splitting one revenue pot in a shared v3 model — is the arena, see
+[ARENA.md](ARENA.md).
 
 ---
 

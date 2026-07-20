@@ -23,6 +23,12 @@ import { continuousGreedy } from "../src/strategies/continuousGreedy.js";
 import { fixedGrid48h, fixedGridWeekly } from "../src/strategies/fixedGrid.js";
 import { persistenceCarry } from "../src/strategies/persistenceCarry.js";
 import { waterFilling } from "../src/strategies/waterFilling.js";
+import { uniformStatic } from "../src/strategies/uniformStatic.js";
+import { randomRotator } from "../src/strategies/randomRotator.js";
+import { momentumChaser } from "../src/strategies/momentumChaser.js";
+import { ewmaForecast } from "../src/strategies/ewmaForecast.js";
+import { crowdingAvoider } from "../src/strategies/crowdingAvoider.js";
+import { banditAllocator } from "../src/strategies/banditAllocator.js";
 import type { Strategy } from "../src/strategies/types.js";
 import { T0 } from "./helpers.js";
 
@@ -130,5 +136,29 @@ describe("golden backtest snapshots (exact, committed)", () => {
       "continuous-greedy",
       continuousBacktest(continuousGreedy({ cadenceSec: HOUR, lookbackSec: DAY }), HOUR),
     );
+  });
+
+  it("UniformStatic on the continuous model", () => {
+    checkGolden("uniform-static", continuousBacktest(uniformStatic(), 2 * DAY));
+  });
+
+  it("RandomRotator on the continuous model", () => {
+    checkGolden("random-rotator", continuousBacktest(randomRotator({ seed: "7" }), 2 * DAY));
+  });
+
+  it("MomentumChaser on the continuous model", () => {
+    checkGolden("momentum-chaser", continuousBacktest(momentumChaser(), 2 * DAY));
+  });
+
+  it("EwmaForecast on the continuous model", () => {
+    checkGolden("ewma-forecast", continuousBacktest(ewmaForecast(), 2 * DAY));
+  });
+
+  it("CrowdingAvoider on the continuous model", () => {
+    checkGolden("crowding-avoider", continuousBacktest(crowdingAvoider(), 2 * DAY));
+  });
+
+  it("BanditAllocator on the continuous model", () => {
+    checkGolden("bandit-allocator", continuousBacktest(banditAllocator({ seed: "7" }), 2 * DAY));
   });
 });

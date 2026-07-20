@@ -1,0 +1,87 @@
+{
+  "marketBenchmarkReturn": "1553269370111198196250",
+  "oracleReturn": "1685779599603491514820",
+  "samples": 70,
+  "agents": [
+    {
+      "id": "grid48",
+      "totalReturn": "1660277584725740320433",
+      "returnVsMarket": "107008214614542124183",
+      "turnover": "1833120277231428730",
+      "rotations": 12,
+      "blockedSubmissions": 0
+    },
+    {
+      "id": "carry",
+      "totalReturn": "1655176844884177835799",
+      "returnVsMarket": "101907474772979639549",
+      "turnover": "1709775614446457100",
+      "rotations": 12,
+      "blockedSubmissions": 0
+    },
+    {
+      "id": "water",
+      "totalReturn": "1705160449900428494574",
+      "returnVsMarket": "151891079789230298324",
+      "turnover": "10560806232965823404",
+      "rotations": 30,
+      "blockedSubmissions": 0
+    },
+    {
+      "id": "greedy",
+      "totalReturn": "1717263546879222850092",
+      "returnVsMarket": "163994176768024653842",
+      "turnover": "7603331534021404122",
+      "rotations": 32,
+      "blockedSubmissions": 0
+    },
+    {
+      "id": "uniform",
+      "totalReturn": "1130025595200970098550",
+      "returnVsMarket": "-423243774910228097700",
+      "turnover": "1000000000000000000",
+      "rotations": 2,
+      "blockedSubmissions": 0
+    },
+    {
+      "id": "random",
+      "totalReturn": "1135996477389865692425",
+      "returnVsMarket": "-417272892721332503825",
+      "turnover": "20000000000000000000",
+      "rotations": 34,
+      "blockedSubmissions": 0
+    },
+    {
+      "id": "chaser",
+      "totalReturn": "1261415252569310629083",
+      "returnVsMarket": "-291854117541887567167",
+      "turnover": "30408362881411804230",
+      "rotations": 36,
+      "blockedSubmissions": 0
+    },
+    {
+      "id": "ewma",
+      "totalReturn": "1661909743926022641994",
+      "returnVsMarket": "108640373814824445744",
+      "turnover": "1830160574159924572",
+      "rotations": 36,
+      "blockedSubmissions": 0
+    },
+    {
+      "id": "avoider",
+      "totalReturn": "1410183340989206266139",
+      "returnVsMarket": "-143086029121991930111",
+      "turnover": "5359047051788428132",
+      "rotations": 36,
+      "blockedSubmissions": 0
+    },
+    {
+      "id": "bandit",
+      "totalReturn": "1306261269301609349897",
+      "returnVsMarket": "-247008100809588846353",
+      "turnover": "20500000000000000000",
+      "rotations": 22,
+      "blockedSubmissions": 0
+    }
+  ]
+}
